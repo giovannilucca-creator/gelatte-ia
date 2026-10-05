@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-
+import 'database/database_helper.dart';
+import 'services/ai_service.dart';
 void main() {
   runApp(const GelatteIA());
 }
@@ -221,6 +222,32 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int paginaAtual = 0;
+
+  @override
+void initState() {
+  super.initState();
+  carregarVendasDoBanco();
+}
+
+Future<void> carregarVendasDoBanco() async {
+  final dados = await DatabaseHelper.instance.buscarVendas();
+
+  if (!mounted) return;
+
+  setState(() {
+    vendas.clear();
+
+    for (final item in dados) {
+      vendas.add(
+        Venda(
+          produto: item['produto'] as String,
+          valor: (item['valor'] as num).toDouble(),
+          data: DateTime.parse(item['data'] as String),
+        ),
+      );
+    }
+  });
+}
 
   final List<Venda> vendas = [
     Venda(
@@ -669,7 +696,7 @@ class _VendasScreenState extends State<VendasScreen> {
   final produtoController = TextEditingController();
   final valorController = TextEditingController();
 
-  void cadastrar() {
+  Future<void> cadastrar() async { 
     final produto = produtoController.text.trim();
     final valor = double.tryParse(
       valorController.text.replaceAll(',', '.'),
@@ -685,6 +712,10 @@ class _VendasScreenState extends State<VendasScreen> {
     }
 
     widget.onAdicionar(produto, valor);
+    await DatabaseHelper.instance.inserirVenda(
+  produto: produto,
+  valor: valor,
+);
 
     produtoController.clear();
     valorController.clear();
@@ -833,28 +864,36 @@ class _DespesasScreenState extends State<DespesasScreen> {
   final descricaoController = TextEditingController();
   final valorController = TextEditingController();
 
-  void cadastrar() {
-    final descricao = descricaoController.text.trim();
-    final valor = double.tryParse(
-      valorController.text.replaceAll(',', '.'),
+  Future<void> cadastrar() async {
+  final descricao = descricaoController.text.trim();
+  final valor = double.tryParse(
+    valorController.text.replaceAll(',', '.'),
+  );
+
+  if (descricao.isEmpty || valor == null || valor <= 0) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Preencha os dados corretamente.'),
+      ),
     );
-
-    if (descricao.isEmpty || valor == null || valor <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Preencha os dados corretamente.'),
-        ),
-      );
-      return;
-    }
-
-    widget.onAdicionar(descricao, valor);
-
-    descricaoController.clear();
-    valorController.clear();
-
-    Navigator.pop(context);
+    return;
   }
+
+  widget.onAdicionar(descricao, valor);
+
+  await DatabaseHelper.instance.inserirDespesa(
+    descricao: descricao,
+    categoria: 'Geral',
+    valor: valor,
+  );
+
+  descricaoController.clear();
+  valorController.clear();
+
+  if (!mounted) return;
+
+  Navigator.pop(context);
+}
 
   void abrirCadastro() {
     showModalBottomSheet(
@@ -1144,27 +1183,53 @@ class AnaliseScreen extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 15),
-                  Text(
-                    gerarAnalise(),
-                    style: const TextStyle(
-                      height: 1.5,
-                      color: Colors.black87,
-                    ),
-                  ),
+                  FutureBuilder<String>(
+  future: AiService.analisar(
+    receita: receita,
+    despesas: despesas,
+    lucro: lucro,
+    margem: margem,
+  ),
+  builder: (context, snapshot) {
+    if (snapshot.connectionState == ConnectionState.waiting) {
+      return const Row(
+        children: [
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          SizedBox(width: 12),
+          Text('Analisando os indicadores com IA...'),
+        ],
+      );
+    }
+
+    if (snapshot.hasError) {
+      return Text(
+        'Não foi possível gerar a análise com IA.\n${snapshot.error}',
+        style: const TextStyle(
+          height: 1.5,
+          color: Colors.red,
+        ),
+      );
+    }
+
+    return Text(
+      snapshot.data ?? 'Nenhuma análise foi retornada.',
+      style: const TextStyle(
+        height: 1.5,
+        color: Colors.black87,
+      ),
+    );
+  },
+),
                 ],
               ),
             ),
 
             const SizedBox(height: 15),
-
-            const Text(
-              'Observação: nesta primeira versão, a análise é gerada localmente. Na próxima etapa vamos conectar um serviço de IA real.',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey,
-                height: 1.4,
-              ),
-            ),
+            
           ],
         ),
       ),
